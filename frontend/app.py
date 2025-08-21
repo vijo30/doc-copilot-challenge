@@ -2,6 +2,8 @@ import streamlit as st
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.embeddings import OllamaEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings import HuggingFaceEmbeddings
 
 def process_pdfs(uploaded_files):
     """
@@ -31,6 +33,17 @@ def process_pdfs(uploaded_files):
         all_chunks.extend(chunks)
 
     return all_chunks
+  
+def vectorize_and_store(chunks):
+    """
+    Vectorizes document chunks and stores them in a ChromaDB collection.
+
+    Args:
+        chunks: A list of document chunks.
+    """
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    vector_store = Chroma.from_documents(chunks, embeddings, collection_name="doc_copilot")
+    st.session_state.vector_store = vector_store
 
 def main():
     """

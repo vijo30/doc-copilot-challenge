@@ -5,3 +5,5 @@ pypdf
 tiktoken
 uv
 pytest
+chromadb
+sentence-transformers
