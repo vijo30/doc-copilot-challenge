@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.env
+.venv
+venv/
+
+# Docker
+.docker/
+
+# Data
+data/
+chroma_db/
+uploaded_files/
+
+# IDE
+.vscode/
+.idea/
