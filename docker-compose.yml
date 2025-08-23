@@ -1,19 +1,80 @@
 services:
-  doc_copilot_app:
-    build: .
+  # The Streamlit frontend service
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "8501:8501"
-    volumes:
-      - .:/app
+    command: streamlit run frontend/app.py --server.port 8501 --server.address 0.0.0.0
+    environment:
+      - BACKEND_URL=http://backend:8000
     env_file:
-      - .env
+      - ./.env
 
-  chroma_db:
-    image: chromadb/chroma:latest
-    volumes:
-      - chroma_data:/chroma
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ./.env
 
+  # The Redis message broker service
+  redis:
+    image: redis:6-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+
+  # The PostgreSQL database service for chat history
+  postgres:
+    image: postgres:13
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    env_file:
+      - ./.env
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # The Celery worker service to process background tasks
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: celery -A backend.tasks worker --loglevel=info
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
+      - postgres
+    env_file:
+      - ./.env
+    # This is a key line for Celery to find your tasks file
+    working_dir: /app
+    
 volumes:
-  chroma_data:
+  redis_data:
+  postgres_data:

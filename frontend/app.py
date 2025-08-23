@@ -1,77 +1,144 @@
+# frontend/app.py
+
 import streamlit as st
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.embeddings import OllamaEmbeddings
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+import requests
+import uuid
+import time
+import os
 
-def process_pdfs(uploaded_files):
-    """
-    Processes uploaded PDF files by loading, splitting, and embedding their content.
+# Set page configuration
+st.set_page_config(page_title="PDF Chat", page_icon="📄")
 
-    Args:
-        uploaded_files: A list of uploaded Streamlit file objects.
+BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 
-    Returns:
-        The processed document chunks.
-    """
-    all_chunks = []
+st.title("📄 Chat with PDF")
+st.markdown("Upload a PDF and ask questions about its content.")
+
+if st.sidebar.button("New Chat"):
+    # Clear the session state to start a new chat
+    new_session_id = str(uuid.uuid4())
+    st.session_state.session_id = new_session_id
+    st.session_state.is_processed = False
+    st.session_state.current_chatroom = {"id": new_session_id, "messages": []}
     
-    for uploaded_file in uploaded_files:
-        temp_file_path = f"./data/{uploaded_file.name}"
-        with open(temp_file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
+    # Update the URL with the new session ID before rerunning
+    st.query_params["chatroom"] = new_session_id
+    st.rerun()
 
-        loader = PyPDFLoader(temp_file_path)
-        documents = loader.load()
+# --- Session State and URL Management ---
 
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200
-        )
-        chunks = text_splitter.split_documents(documents)
-        all_chunks.extend(chunks)
+query_params = st.query_params
+session_id_from_url = query_params.get("chatroom")
 
-    return all_chunks
-  
-def vectorize_and_store(chunks):
-    """
-    Vectorizes document chunks and stores them in a ChromaDB collection.
+if "session_id" not in st.session_state:
+    if session_id_from_url:
+        st.session_state.session_id = session_id_from_url
+        st.session_state.is_processed = False
+    else:
+        st.session_state.session_id = str(uuid.uuid4())
+        st.session_state.is_processed = False
+        st.query_params["chatroom"] = st.session_state.session_id  # Initialize the URL for the first time
+    
+    st.session_state.current_chatroom = {"id": st.session_state.session_id, "messages": []}
+    
+    try:
+        response = requests.get(f"{BACKEND_URL}/chat-history/{st.session_state.session_id}", timeout=300)
+        response.raise_for_status()
+        data = response.json()
+        st.session_state.current_chatroom["messages"] = data.get("messages", [])
+        if st.session_state.current_chatroom["messages"]:
+            st.session_state.is_processed = True
+    except requests.exceptions.RequestException as e:
+        st.error(f"Failed to fetch chat history: {e}")
 
-    Args:
-        chunks: A list of document chunks.
-    """
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    vector_store = Chroma.from_documents(chunks, embeddings, collection_name="doc_copilot")
-    st.session_state.vector_store = vector_store
+# ... (New Chat and PDF Upload buttons)
 
-def main():
-    """
-    Main function to run the Streamlit app.
-    """
-    st.set_page_config(
-        page_title="Doc Copilot",
-        page_icon="📄",
-        layout="centered"
-    )
+uploaded_files = st.sidebar.file_uploader(
+    "Upload PDFs",
+    type="pdf",
+    accept_multiple_files=True,
+    help="You can upload multiple PDF files at once."
+)
 
-    st.title("📄 Doc Copilot")
-    st.markdown("Upload up to 5 PDF files and ask questions about their content.")
+if uploaded_files:
+    if st.button("Process PDFs"):
+        files_data = [("files", (file.name, file.getvalue(), file.type)) for file in uploaded_files]
+        with st.spinner("Starting processing..."):
+            try:
+                response = requests.post(
+                    f"{BACKEND_URL}/process-pdfs/",
+                    files=files_data,
+                    data={"session_id": st.session_state.session_id},
+                    timeout=300,
+                )
+                response.raise_for_status()
+                data = response.json()
+                task_id = data.get("task_id")
+                st.session_state.is_processed = False
+                st.info("Processing PDFs in the background. This may take a few moments.")
 
-    uploaded_files = st.file_uploader(
-        "Choose PDF files",
-        type="pdf",
-        accept_multiple_files=True
-    )
+                # Poll the task status endpoint
+                with st.spinner("Processing..."):
+                    while True:
+                        task_response = requests.get(f"{BACKEND_URL}/task-status/{task_id}")
+                        task_data = task_response.json()
+                        if task_data.get("state") == "SUCCESS":
+                            st.session_state.is_processed = True
+                            st.success("PDFs processed successfully!")
+                            st.rerun()
+                            break
+                        elif task_data.get("state") == "FAILURE":
+                            st.error("An error occurred during processing.")
+                            break
+                        time.sleep(2)
+                        
+            except requests.exceptions.RequestException as e:
+                st.error(f"Failed to start PDF processing: {e}")
+                st.error("Make sure the backend and worker are running.")
+                
+# --- Chat Interface ---
 
-    if uploaded_files:
-        if len(uploaded_files) > 5:
-            st.warning("You can only upload up to 5 files. Please remove some.")
-        else:
-            with st.spinner("Processing files..."):
-                processed_chunks = process_pdfs(uploaded_files)
-                st.success(f"Processing complete! Found {len(processed_chunks)} chunks.")
-            
-            
-if __name__ == "__main__":
-  main()
+for message in st.session_state.current_chatroom["messages"]:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+if not st.session_state.is_processed:
+    st.info("Please process a document before asking questions.")
+
+
+if prompt := st.chat_input("Ask a question about the PDF content", disabled=not st.session_state.is_processed):
+    # Add user message to the chat display
+    st.session_state.current_chatroom["messages"].append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # Prepare payload for backend
+    payload = {
+        "session_id": st.session_state.session_id,
+        "question": prompt,
+    }
+
+    with st.chat_message("assistant"):
+        message_placeholder = st.empty()
+        with st.spinner("Thinking..."):
+            try:
+                response = requests.post(
+                    f"{BACKEND_URL}/ask-question/",
+                    json=payload,
+                    timeout=300
+                )
+                response.raise_for_status()
+                data = response.json()
+                messages = data.get("messages", [])
+                if messages:
+                    last_message = messages[-1]
+                    if last_message["role"] == "assistant":
+                        full_response = last_message["content"].strip()
+                        message_placeholder.markdown(full_response)
+                        st.session_state.current_chatroom["messages"] = messages
+                    else:
+                        st.error("Invalid response from backend.")
+                else:
+                    st.error("Invalid response from backend.")
+            except requests.exceptions.RequestException as e:
+                st.error(f"Failed to get a response from the backend: {e}")

@@ -1,0 +1,22 @@
+# .dockerignore
+
+# Virtual environment directory
+.venv/
+env/
+
+# IDE files
+.vscode/
+.idea/
+
+# macOS and Windows files
+.DS_Store
+Thumbs.db
+
+# Docker-related files
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Other unnecessary files
+__pycache__/
+*.pyc
