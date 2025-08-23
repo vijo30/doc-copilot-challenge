@@ -1,5 +1,3 @@
-# backend/tasks.py
-
 import os
 from celery import Celery
 from backend.services.document_service import DocumentService
@@ -9,11 +7,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 import logging
 
-# Configure Celery
 celery_app = Celery('tasks', broker=f"redis://{os.getenv('REDIS_HOST', 'redis')}:6379/0",
                     backend=f"redis://{os.getenv('REDIS_HOST', 'redis')}:6379/0")
 
-# Set up database session for the worker
 DATABASE_URL = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -21,7 +17,6 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 embeddings = get_embeddings_model()
 
-# Initialize document service for the worker
 document_service = DocumentService(embeddings, SessionLocal)
 
 @celery_app.task

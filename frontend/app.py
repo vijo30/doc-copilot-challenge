@@ -1,12 +1,10 @@
-# frontend/app.py
-
 import streamlit as st
 import requests
 import uuid
 import time
 import os
 
-# Set page configuration
+
 st.set_page_config(page_title="PDF Chat", page_icon="📄")
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
@@ -15,17 +13,14 @@ st.title("📄 Chat with PDF")
 st.markdown("Upload a PDF and ask questions about its content.")
 
 if st.sidebar.button("New Chat"):
-    # Clear the session state to start a new chat
     new_session_id = str(uuid.uuid4())
     st.session_state.session_id = new_session_id
     st.session_state.is_processed = False
     st.session_state.current_chatroom = {"id": new_session_id, "messages": []}
     
-    # Update the URL with the new session ID before rerunning
     st.query_params["chatroom"] = new_session_id
     st.rerun()
 
-# --- Session State and URL Management ---
 
 query_params = st.query_params
 session_id_from_url = query_params.get("chatroom")
@@ -51,7 +46,6 @@ if "session_id" not in st.session_state:
     except requests.exceptions.RequestException as e:
         st.error(f"Failed to fetch chat history: {e}")
 
-# ... (New Chat and PDF Upload buttons)
 
 uploaded_files = st.sidebar.file_uploader(
     "Upload PDFs",
@@ -77,7 +71,6 @@ if uploaded_files:
                 st.session_state.is_processed = False
                 st.info("Processing PDFs in the background. This may take a few moments.")
 
-                # Poll the task status endpoint
                 with st.spinner("Processing..."):
                     while True:
                         task_response = requests.get(f"{BACKEND_URL}/task-status/{task_id}")
@@ -96,7 +89,6 @@ if uploaded_files:
                 st.error(f"Failed to start PDF processing: {e}")
                 st.error("Make sure the backend and worker are running.")
                 
-# --- Chat Interface ---
 
 for message in st.session_state.current_chatroom["messages"]:
     with st.chat_message(message["role"]):
@@ -107,12 +99,10 @@ if not st.session_state.is_processed:
 
 
 if prompt := st.chat_input("Ask a question about the PDF content", disabled=not st.session_state.is_processed):
-    # Add user message to the chat display
     st.session_state.current_chatroom["messages"].append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Prepare payload for backend
     payload = {
         "session_id": st.session_state.session_id,
         "question": prompt,

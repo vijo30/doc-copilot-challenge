@@ -1,5 +1,3 @@
-# backend/utils/model_loader.py
-
 from langchain_huggingface.embeddings import HuggingFaceEmbeddings
 
 class EmbeddingsSingleton:

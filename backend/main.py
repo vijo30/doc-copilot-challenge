@@ -19,14 +19,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from langchain_core.messages import HumanMessage, AIMessage
 
-# Load environment variables from the .env file in the backend folder
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
-# Configure logging
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
-# Pydantic models for API requests and responses
 class QuestionRequest(BaseModel):
     question: str
     session_id: str
@@ -40,7 +37,6 @@ class DeleteChatroomRequest(BaseModel):
 class ChatroomListResponse(BaseModel):
     chatrooms: List[Dict[str, Any]]
 
-# Initialize the embedding model as a global instance
 embeddings = get_embeddings_model()
 
 app = FastAPI()
@@ -54,16 +50,13 @@ app.add_middleware(
 )
 
 
-# Database connection
 DATABASE_URL = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Ensure the database tables are created using the Base from models.py
 Base.metadata.create_all(bind=engine)
 
 
-# Initialize Redis client
 redis_client = redis.StrictRedis(
     host=os.getenv("REDIS_HOST", "redis"),
     port=os.getenv("REDIS_PORT", "6379"),
@@ -71,7 +64,6 @@ redis_client = redis.StrictRedis(
 )
 
 
-# Initialize services
 database_service = DatabaseService(SessionLocal)
 chat_service = ChatService(database_service)
 
@@ -79,10 +71,8 @@ chat_service = ChatService(database_service)
 @app.post("/process-pdfs/")
 async def process_pdfs_endpoint(session_id: str = Form(...), files: List[UploadFile] = File(...)):
     try:
-        # Read file contents and pass them to the background task
         file_data = [{"filename": file.filename, "content": file.file.read()} for file in files]
         
-        # Start the background task and return the task ID
         task = process_documents_task.delay(session_id, file_data)
         return {"message": "Processing started.", "task_id": task.id}
     except Exception as e:
@@ -99,7 +89,6 @@ async def get_task_status(task_id: str):
         if 'complete' in response['status']:
             response['result'] = task.info
     else:
-        # Something went wrong in the task
         response = {'state': task.state, 'status': str(task.info)}
     return response
 
@@ -112,28 +101,23 @@ async def ask_question_endpoint(request: QuestionRequest):
             if not chat_session_entry or not chat_session_entry.faiss_index:
                 raise HTTPException(status_code=404, detail="Session not found or has expired.")
 
-        # Deserialize the FAISS index from the database entry
         vector_store = pickle.loads(chat_session_entry.faiss_index)
         vector_store.embedding_function = embeddings
 
         db_history = database_service.get_chat_history(request.session_id)
         
-        # Format the chat history for LangChain
         chat_history = [
             HumanMessage(content=msg['content']) if msg['role'] == "user" else AIMessage(content=msg['content'])
             for msg in db_history
         ]
         
-        # Create a QA chain and get the answer
         qa_chain = create_qa_chain(vector_store)
         result = qa_chain.invoke({"question": request.question, "chat_history": chat_history})
         answer = result["answer"]
 
-        # Add the question and answer to the database
         database_service.add_message(request.session_id, "user", request.question)
         database_service.add_message(request.session_id, "assistant", answer)
 
-        # Retrieve the updated chat history
         updated_chat_history = database_service.get_chat_history(request.session_id)
         
         return {"messages": updated_chat_history}

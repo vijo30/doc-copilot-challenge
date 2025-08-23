@@ -50,7 +50,6 @@ class DocumentService:
         """
         raw_text = ""
         for file in file_data:
-            # Use BytesIO to read the binary content from the dictionary
             reader = PdfReader(BytesIO(file["content"]))
             for page in reader.pages:
                 text = page.extract_text()
