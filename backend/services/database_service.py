@@ -1,10 +1,7 @@
-import uuid
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from datetime import datetime
-from typing import List, Dict, Any
-
+from typing import List, Dict, Any, Generator
 from backend.models.schemas import ChatSession, ChatMessage
+from backend.tasks import SessionLocal
+from typing import Optional
 
 class DatabaseService:
     def __init__(self, SessionLocal):
@@ -16,6 +13,17 @@ class DatabaseService:
             db_session = ChatSession(id=session_id, name=", ".join(filenames))
             db.add(db_session)
             db.commit()
+        finally:
+            db.close()
+            
+    def get_session(self, session_id: str) -> Optional[ChatSession]:
+        """
+        Retrieves a ChatSession object from the database by its ID.
+        """
+        db = self.SessionLocal()
+        try:
+            chat_session = db.query(ChatSession).filter_by(id=session_id).first()
+            return chat_session
         finally:
             db.close()
 
@@ -52,3 +60,14 @@ class DatabaseService:
             db.commit()
         finally:
             db.close()
+            
+
+def get_database_service() -> Generator[DatabaseService, None, None]:
+    """
+    Dependency that provides a DatabaseService instance with a fresh session.
+    """
+    db_session = SessionLocal()
+    try:
+        yield DatabaseService(SessionLocal)
+    finally:
+        db_session.close()

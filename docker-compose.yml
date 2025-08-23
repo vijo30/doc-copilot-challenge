@@ -59,7 +59,6 @@ services:
       retries: 5
       start_period: 10s
 
-  # The Celery worker service to process background tasks
   worker:
     build:
       context: .
@@ -67,14 +66,28 @@ services:
     command: celery -A backend.tasks worker --loglevel=info
     volumes:
       - .:/app
+    working_dir: /app
     depends_on:
-      - redis
-      - postgres
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     env_file:
       - ./.env
-    # This is a key line for Celery to find your tasks file
-    working_dir: /app
+
+  chromadb:
+    image: chromadb/chroma
+    ports:
+      - "8001:8000" # Expose ChromaDB on port 8001
+    volumes:
+      - chromadb_data:/chroma/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     
 volumes:
   redis_data:
   postgres_data:
+  chromadb_data:

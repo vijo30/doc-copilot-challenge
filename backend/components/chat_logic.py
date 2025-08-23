@@ -47,16 +47,20 @@ def create_qa_chain(vector_store):
         | RunnablePassthrough.assign(
             context=lambda x: retriever.invoke(x["standalone_question"]),
         )
+        | RunnablePassthrough.assign(
+            context=lambda x: "\n\n".join([doc.page_content for doc in x["context"]]),
+        )
         | RunnableLambda(
             lambda x: {
-                "context": "\n\n".join([doc.page_content for doc in x["context"]]),
+                "context": x["context"],
                 "question": x["question"],
                 "chat_history": x["chat_history"]
             }
         )
         | get_answer_prompt()
         | llm
-        | RunnableLambda(lambda x: {"answer": x.content})
+        | StrOutputParser()
+        | RunnableLambda(lambda x: {"answer": x})
     )
     
     return qa_chain

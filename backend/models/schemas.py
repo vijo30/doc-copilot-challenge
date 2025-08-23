@@ -1,18 +1,30 @@
-# backend/models/schemas.py
-
 import uuid
-from sqlalchemy import Column, String, DateTime, Text, Integer, LargeBinary
 from sqlalchemy.ext.declarative import declarative_base
-from datetime import datetime
+from sqlalchemy import Column, String, DateTime, Text, func, TypeDecorator, Integer
+from sqlalchemy.dialects.postgresql import UUID
+import json
+from backend.database import Base
 
-Base = declarative_base()
+class JSONEncodedList(TypeDecorator):
+    """Stores a list as a JSON-encoded string."""
+    impl = Text
+
+    def process_bind_param(self, value, dialect):
+        if value is not None:
+            return json.dumps(value)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is not None:
+            return json.loads(value)
+        return value
 
 class ChatSession(Base):
     __tablename__ = 'chat_sessions'
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String)
-    faiss_index = Column(LargeBinary)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    uploaded_files = Column(JSONEncodedList, default=[])
+    created_at = Column(DateTime, default=func.now())
 
 class ChatMessage(Base):
     __tablename__ = 'chat_messages'
@@ -20,4 +32,4 @@ class ChatMessage(Base):
     session_id = Column(String)
     role = Column(String)
     content = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=func.now())

@@ -19,5 +19,5 @@ langchain-text-splitters
 python-multipart
 SQLAlchemy
 psycopg2-binary
-faiss-cpu
 celery
+langchain-chroma
