@@ -42,24 +42,19 @@ class DocumentService:
       
 
     def process_documents(self, file_data: list, session_id: str, filenames: list) -> str:
-        # Get the shared ChromaDB client
         chroma_client_singleton = ChromaClientSingleton()
         
-        # 1. DELETE any pre-existing collection for this session
         try:
-            # Check if the collection exists before attempting to delete it
             chroma_client_singleton.client.get_collection(name=session_id)
             chroma_client_singleton.client.delete_collection(name=session_id)
             print(f"ChromaDB collection for session {session_id} deleted successfully.")
         except Exception:
-            # Collection may not exist, which is fine for a new chat
             print(f"No existing ChromaDB collection found for session {session_id}. Proceeding.")
         
         all_documents = []
         
         for file in file_data:
             raw_text = ""
-            # 2. Extract and chunk text from the new files
             reader = PdfReader(BytesIO(file["content"]))
             for page in reader.pages:
                 text = page.extract_text()
@@ -68,12 +63,10 @@ class DocumentService:
             
             texts = self.text_splitter.split_text(raw_text)
             
-            # 3. Create Document objects with metadata for each chunk
             file_name = file["filename"]
             documents = [Document(page_content=t, metadata={"filename": file_name}) for t in texts]
             all_documents.extend(documents)
             
-        # 4. Create and persist the NEW collection with the new documents
         if not all_documents:
             print("No text found in the uploaded documents. Aborting vector store creation.")
             return "No text found in the uploaded documents."

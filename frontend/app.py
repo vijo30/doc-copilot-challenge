@@ -35,7 +35,6 @@ class AppSessionManager:
     def fetch_initial_data(self):
         """Fetches existing chat history and files from the backend on startup."""
         try:
-            # Fetch chat history
             history_response = requests.get(f"{self.backend_url}/chat-history/{st.session_state.session_id}", timeout=300)
             history_response.raise_for_status()
             data = history_response.json()
@@ -43,7 +42,6 @@ class AppSessionManager:
             if st.session_state.messages:
                 st.session_state.is_processed = True
             
-            # Fetch uploaded files for the session
             files_response = requests.get(f"{self.backend_url}/chat-files/{st.session_state.session_id}")
             files_response.raise_for_status()
             files_data = files_response.json()
@@ -90,8 +88,7 @@ class FileUploaderComponent:
 
         if uploaded_files and st.button("Process PDFs"):
             self.process_files(uploaded_files)
-        
-        # Display uploaded file names if they exist in session state
+            
         if st.session_state.uploaded_filenames:
             st.sidebar.markdown("---")
             st.sidebar.subheader("Uploaded Files")
@@ -160,17 +157,15 @@ class ChatInterface:
         disabled_input = not st.session_state.is_processed
         if prompt := st.chat_input("Ask a question about your PDFs", disabled=disabled_input):
             
-            # Immediately display the user's message
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
                 st.markdown(prompt)
 
-            # Create a placeholder for the assistant's message
+
             with st.chat_message("assistant"):
                 placeholder = st.empty()
                 with st.spinner("AI is thinking..."):
                     try:
-                        # Make the API call
                         response = requests.post(
                             f"{self.backend_url}/ask-question/",
                             json={"question": prompt, "session_id": st.session_state.session_id},
@@ -178,14 +173,11 @@ class ChatInterface:
                         )
                         response.raise_for_status()
                         
-                        # Get the updated chat history
                         updated_messages = response.json().get("messages", [])
                         st.session_state.messages = updated_messages
                         
-                        # Get the last AI message
                         last_ai_message = updated_messages[-1]["content"]
 
-                        # Use the placeholder to display the AI message
                         placeholder.markdown(last_ai_message)
 
                     except requests.exceptions.RequestException as e:

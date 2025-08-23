@@ -15,7 +15,6 @@ from backend.utils.model_loader import get_embeddings_model
 
 from langchain_chroma import Chroma
 from langchain_core.messages import HumanMessage, AIMessage
-from chromadb import HttpClient
 import redis
 from backend.chroma_client_singleton import ChromaClientSingleton
 
@@ -34,12 +33,10 @@ class ChatHistoryResponse(BaseModel):
 class DeleteChatroomRequest(BaseModel):
     session_id: str
 
-# Load environment variables and set up logging
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
-# Core app setup
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -49,7 +46,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize global singletons
 embeddings = get_embeddings_model()
 redis_client = redis.StrictRedis(
     host=os.getenv("REDIS_HOST", "redis"),
