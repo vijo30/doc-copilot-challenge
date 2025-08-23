@@ -9,8 +9,10 @@ This project is a conversational AI copilot that allows users to upload up to 5 
 The system is built on a **Retrieval-Augmented Generation (RAG)** architecture, designed to provide accurate answers by referencing user-provided documents.
 
 - **Frontend (Streamlit):** A user-friendly interface for uploading documents and interacting with the conversational copilot.
-- **Backend (FastAPI - Optional):** An API to handle document processing and orchestration logic.
-- **Document Processing:** Extracts, splits, and embeds text from PDFs.
+- **Backend (FastAPI):** An API to handle conversational logic and interact with the database.
+- **Worker (Celery):** An asynchronous worker that handles the intensive task of document processing.
+- **Database (PostgreSQL):** A persistent database that stores chat history and a record of uploaded files for each session.
+- **Message Broker (Redis):** Manages the communication queue between the backend and the Celery worker.
 - **Vector Store (ChromaDB):** Stores the vector embeddings of document chunks for efficient semantic search.
 - **LLM:** Generates conversational responses based on the retrieved context.
 
@@ -50,6 +52,8 @@ This project uses `docker` and `docker-compose` to manage all its services.
 - **Orchestration Framework:** **LangChain** was chosen for its comprehensive set of tools for building RAG applications, including document loaders, text splitters, and ready-made chains.
 - **LLM:** We use an OpenAI LLM (e.g., GPT-3.5-turbo) for its superior performance and ease of integration via API.
 - **Vector Store:** **ChromaDB** was selected for its simplicity and ease of use in a containerized environment, making it perfect for rapid prototyping.
+- **Database:** **PostgreSQL** was chosen for its robustness and reliability in handling persistent data like chat sessions and file metadata.
+- **Asynchronous Tasks:** **Celery** with **Redis** as a message broker was implemented to offload the time-consuming PDF processing tasks from the main API thread, preventing the user interface from freezing.
 - **Frontend:** **Streamlit** was used to build the user interface quickly and efficiently, allowing us to focus more on the core AI logic.
 - **Containerization:** **Docker** and **docker-compose** ensure that the application is easy to set up and run, guaranteeing a consistent environment for anyone who wants to test it.
 
@@ -73,6 +77,7 @@ The conversational flow follows a structured RAG pipeline:
 
 ### Current Limitations
 - **Single-format Support:** The system currently only handles PDF files.
+- **Advanced Features:** The optional features (summarization, comparison, classification) have not yet been implemented.
 - **Basic UI:** The user interface is functional but lacks advanced features and a polished design.
 - **Cost:** Reliance on a paid LLM API (OpenAI) can be a cost factor for extensive usage.
 
