@@ -3,6 +3,8 @@ from sqlalchemy import Column, String, DateTime, Text, func, TypeDecorator, Inte
 from sqlalchemy.dialects.postgresql import UUID
 import json
 from backend.database import Base
+from pydantic import BaseModel
+from typing import List, Dict, Any, Optional
 
 class JSONEncodedList(TypeDecorator):
     """Stores a list as a JSON-encoded string."""
@@ -32,3 +34,25 @@ class ChatMessage(Base):
     role = Column(String)
     content = Column(Text)
     created_at = Column(DateTime, default=func.now())
+    
+class QuestionRequest(BaseModel):
+    session_id: str
+    question: str
+    language: str
+
+class SummarizeRequest(BaseModel):
+    session_id: str
+    filenames: Optional[List[str]] = None
+    language: str
+
+class CompareRequest(BaseModel):
+    session_id: str
+    filenames: List[str]
+    language: str
+
+class ClassifyRequest(BaseModel):
+    session_id: str
+    language: str
+
+class DeleteChatroomRequest(BaseModel):
+    session_id: str

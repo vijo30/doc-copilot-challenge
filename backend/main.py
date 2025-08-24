@@ -1,39 +1,22 @@
-# backend/main.py
-
-import os
-import logging
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any
 from pydantic import BaseModel
-from dotenv import load_dotenv
+import logging
+from langchain_community.vectorstores import Chroma
 
 from backend.tasks import process_documents_task
 from backend.services.database_service import DatabaseService, get_database_service
-from backend.services.redis_cache_service import get_redis_cache_service
-from backend.components.chat_logic import create_qa_chain
-from backend.utils.model_loader import get_embeddings_model
-
-from langchain_chroma import Chroma
-from langchain_core.messages import HumanMessage, AIMessage
-import redis
-from backend.chroma_client_singleton import ChromaClientSingleton
-from backend.utils.env_loader import load_env
-
+from backend.services.redis_cache_service import RedisCacheService, get_redis_cache_service
+from backend.services.document_service import DocumentService, get_document_service
+from backend.services.chat_service import ChatService, get_chat_service
+from backend.services.document_actions_service import DocumentActionsService, get_document_actions_service
+from backend.models.schemas import QuestionRequest, DeleteChatroomRequest, SummarizeRequest, CompareRequest, ClassifyRequest
 
 from backend.database import Base, engine
+from backend.utils.env_loader import load_env
 
 MAX_FILES_PER_CHAT = 5
-
-class QuestionRequest(BaseModel):
-    question: str
-    session_id: str
-
-class ChatHistoryResponse(BaseModel):
-    messages: List[Dict[str, Any]]
-
-class DeleteChatroomRequest(BaseModel):
-    session_id: str
 
 load_env()
 logging.basicConfig(level=logging.DEBUG)
@@ -47,26 +30,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-cache_service = get_redis_cache_service()
-client_singleton = ChromaClientSingleton()
-embeddings = get_embeddings_model()
-
-
-def get_vector_store(
-    session_id: str,
-):
-    if not cache_service.get_flag(f"vector_store_ready:{session_id}"):
-        raise HTTPException(
-            status_code=404, 
-            detail="Vector store not found for this session. Please wait for processing to complete."
-        )
-
-    return Chroma(
-        client=client_singleton.client,
-        embedding_function=embeddings,
-        collection_name=session_id
-    )
 
 @app.on_event("startup")
 def on_startup():
@@ -83,25 +46,29 @@ def on_startup():
 async def process_pdfs_endpoint(
     files: list[UploadFile] = File(...),
     session_id: str = Form(...),
+    cache_service: RedisCacheService = Depends(get_redis_cache_service),
+    db_service: DatabaseService = Depends(get_database_service)
 ):
-    new_files_count = len(files)
-    if new_files_count > MAX_FILES_PER_CHAT:
+    if len(files) > MAX_FILES_PER_CHAT:
         raise HTTPException(
             status_code=400,
             detail=f"You can only upload {MAX_FILES_PER_CHAT}."
         )
     try:
-        cache_service.delete_keys(
-            f"vector_store_ready:{session_id}",
-        )
-        
-        file_data = [{"filename": file.filename, "content": file.file.read()} for file in files]
+        cache_service.delete_keys(f"vector_store_ready:{session_id}")
+        file_data = [{"filename": file.filename, "content": file.file.read()} for file in files] 
+        session_exists = db_service.get_session(session_id)
+        if not session_exists:
+            db_service.create_session(session_id, [file['filename'] for file in file_data])
+        else:
+            db_service.update_uploaded_files(session_id, [file['filename'] for file in file_data])
+
         task = process_documents_task.delay(session_id, file_data)
         return {"message": "Processing started.", "task_id": task.id}
     except Exception as e:
         logger.error("Error starting PDF processing task:", exc_info=True)
         raise HTTPException(status_code=500, detail="Error starting PDF processing.")
-
+      
 @app.get("/task-status/{task_id}")
 async def get_task_status(task_id: str):
     task = process_documents_task.AsyncResult(task_id)
@@ -119,31 +86,95 @@ async def get_task_status(task_id: str):
 async def ask_question_endpoint(
     request: QuestionRequest, 
     db_service: DatabaseService = Depends(get_database_service),
-    
+    chat_service: ChatService = Depends(get_chat_service),
+    doc_service: DocumentService = Depends(get_document_service)
 ):
     try:
-        db_history = db_service.get_chat_history(request.session_id)
+        vector_store = doc_service.get_vector_store(request.session_id)
+        if not vector_store:
+            raise HTTPException(status_code=404, detail="Vector store not found. Documents must be processed first.")
         
-        chat_history = [
-            HumanMessage(content=msg['content']) if msg['role'] == "user" else AIMessage(content=msg['content'])
-            for msg in db_history
-        ]
-        
-        vector_store = get_vector_store(request.session_id)
-        
-        qa_chain = create_qa_chain(vector_store) 
-        result = qa_chain.invoke({"question": request.question, "chat_history": chat_history})
-        answer = result["answer"]
-
+        answer = chat_service.get_answer(vector_store, request.question, request.session_id, request.language)
         db_service.add_message(request.session_id, "user", request.question)
         db_service.add_message(request.session_id, "assistant", answer)
-
         updated_chat_history = db_service.get_chat_history(request.session_id)
         return {"messages": updated_chat_history}
+    except HTTPException as e:
+        raise e
     except Exception as e:
         logger.error("Error asking question:", exc_info=True)
         raise HTTPException(status_code=500, detail="Error asking question.")
+        
 
+@app.post("/summarize/")
+async def summarize_endpoint(
+    request: SummarizeRequest,
+    actions_service: DocumentActionsService = Depends(get_document_actions_service),
+    doc_service: DocumentService = Depends(get_document_service),
+    db_service: DatabaseService = Depends(get_database_service)
+):
+    try:
+        vector_store = doc_service.get_vector_store(request.session_id)
+        if not vector_store:
+            raise HTTPException(status_code=404, detail="Vector store not found. Documents must be processed first.")
+            
+        summary = actions_service.summarize_documents(vector_store, request.filenames, request.language)
+        
+        db_service.add_message(request.session_id, "assistant", summary)
+        
+        return {"summary": summary}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error summarizing content: {e}")
+        raise HTTPException(status_code=500, detail="Error generating summary.")
+
+@app.post("/compare/")
+async def compare_endpoint(
+    request: CompareRequest,
+    actions_service: DocumentActionsService = Depends(get_document_actions_service),
+    doc_service: DocumentService = Depends(get_document_service),
+    db_service: DatabaseService = Depends(get_database_service)
+):
+    try:
+        vector_store = doc_service.get_vector_store(request.session_id)
+        if not vector_store:
+            raise HTTPException(status_code=404, detail="Vector store not found. Documents must be processed first.")
+            
+        comparison = actions_service.compare_documents(vector_store, request.filenames, request.language)
+        
+        db_service.add_message(request.session_id, "assistant", comparison)
+        
+        return {"comparison": comparison}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error comparing documents: {e}")
+        raise HTTPException(status_code=500, detail="Error generating comparison.")
+
+@app.post("/classify/")
+async def classify_topics_endpoint(
+    request: ClassifyRequest,
+    actions_service: DocumentActionsService = Depends(get_document_actions_service),
+    doc_service: DocumentService = Depends(get_document_service),
+    db_service: DatabaseService = Depends(get_database_service)
+):
+    try:
+        vector_store = doc_service.get_vector_store(request.session_id)
+        if not vector_store:
+            raise HTTPException(status_code=404, detail="Vector store not found. Documents must be processed first.")
+            
+        topics = actions_service.classify_topics(vector_store, request.language)
+        
+        db_service.add_message(request.session_id, "assistant", topics)
+        
+        return {"topics": topics}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error classifying topics: {e}")
+        raise HTTPException(status_code=500, detail="Error classifying topics.")
+      
 @app.get("/chat-history/{session_id}")
 async def get_chat_history_endpoint(session_id: str, db_service: DatabaseService = Depends(get_database_service)):
     try:
@@ -166,34 +197,21 @@ async def get_all_chatrooms_endpoint(db_service: DatabaseService = Depends(get_d
 async def delete_chatroom_endpoint(
     request: DeleteChatroomRequest, 
     db_service: DatabaseService = Depends(get_database_service),
+    doc_service: DocumentService = Depends(get_document_service),
+    cache_service: RedisCacheService = Depends(get_redis_cache_service)
 ):
     try:
-        
-        try:
-            client_singleton.client.get_collection(name=request.session_id)
-            client_singleton.client.delete_collection(name=request.session_id)
-            logger.info(f"ChromaDB collection for session {request.session_id} deleted.")
-        except Exception as e:
-            logger.warning(f"ChromaDB collection for session {request.session_id} not found or could not be deleted: {e}")
-
+        doc_service.delete_vector_store(request.session_id)
         db_service.delete_session(request.session_id)
-        
-        cache_service.delete_keys(
-            f"vector_store_ready:{request.session_id}",
-        )
-        
+        cache_service.delete_keys(f"vector_store_ready:{request.session_id}")
         return {"message": f"Chatroom {request.session_id} successfully deleted."}
     except Exception as e:
         logger.error("Error deleting chatroom:", exc_info=True)
         raise HTTPException(status_code=500, detail="Error deleting chatroom.")
 
 @app.get("/chat-files/{session_id}")
-def get_chat_files(
-    session_id: str, 
-    db_service: DatabaseService = Depends(get_database_service)
-):
+def get_chat_files(session_id: str, db_service: DatabaseService = Depends(get_database_service)):
     chat_session = db_service.get_session(session_id)
     if not chat_session:
         return {"files": []}
-    
     return {"files": chat_session.uploaded_files}

@@ -1,5 +1,4 @@
 services:
-  # The Streamlit frontend service
   frontend:
     build:
       context: .
@@ -30,7 +29,6 @@ services:
     env_file:
       - ./.env
 
-  # The Redis message broker service
   redis:
     image: redis:6-alpine
     ports:
@@ -43,7 +41,6 @@ services:
       timeout: 3s
       retries: 5
 
-  # The PostgreSQL database service for chat history
   postgres:
     image: postgres:13
     ports:
@@ -78,7 +75,7 @@ services:
   chromadb:
     image: chromadb/chroma
     ports:
-      - "8001:8000" # Expose ChromaDB on port 8001
+      - "8001:8000"
     volumes:
       - chromadb_data:/chroma/data
     healthcheck:

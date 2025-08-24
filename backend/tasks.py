@@ -1,10 +1,10 @@
 from asyncio.log import logger
 import os
-
-from dotenv import load_dotenv
 from celery import Celery
 from backend.services.document_service import DocumentService
-from backend.services.redis_cache_service import get_redis_cache_service
+from backend.services.database_service import DatabaseService
+from backend.services.redis_cache_service import RedisCacheService
+from backend.chroma_client_singleton import ChromaClientSingleton
 from backend.utils.model_loader import get_embeddings_model
 from backend.database import SessionLocal
 from backend.utils.env_loader import load_env
@@ -12,28 +12,31 @@ import logging
 
 load_env()
 
-celery_app = Celery('tasks', 
-                    broker=f"redis://{os.getenv('REDIS_HOST', 'redis')}:6379/0",
-                    backend=f"redis://{os.getenv('REDIS_HOST', 'redis')}:6379/0")
 
-embeddings = get_embeddings_model()
-redis_cache_service = get_redis_cache_service()
-
-document_service = DocumentService(embeddings, SessionLocal)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+celery_app = Celery("tasks", broker=redis_url, backend=redis_url)
 
 @celery_app.task(bind=True)
 def process_documents_task(self, session_id: str, file_data: list):
     try:
-        filenames = [file['filename'] for file in file_data]
-        self.update_state(state="PROGRESS", meta={"status": "Processing documents...", "session_id": session_id})
+        db_service = DatabaseService(session_factory=SessionLocal)
+        cache_service = RedisCacheService(os.getenv("REDIS_HOST", "redis"), 6379, 0)
         
-        document_service.process_documents(file_data, session_id, filenames)
+        doc_service = DocumentService(
+            db_service=db_service,
+            cache_service=cache_service,
+            chroma_client=ChromaClientSingleton(),
+            embeddings=get_embeddings_model()
+        )
         
+        doc_service.process_documents(session_id, file_data)
         
         return {"status": "complete", "session_id": session_id}
+
     except Exception as e:
-        logger.error(f"Error in task for session {session_id}: {e}")
-        self.update_state(state="FAILURE", meta={"status": "error", "error": str(e)})
+        self.update_state(state="FAILURE", meta={"exc_type": type(e).__name__, "exc_message": str(e)})
+        logger.error(f"Celery task failed for session {session_id}: {e}")
         raise
