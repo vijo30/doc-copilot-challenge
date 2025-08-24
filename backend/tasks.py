@@ -4,25 +4,33 @@ import os
 from dotenv import load_dotenv
 from celery import Celery
 from backend.services.document_service import DocumentService
+from backend.services.redis_cache_service import get_redis_cache_service
 from backend.utils.model_loader import get_embeddings_model
 from backend.database import SessionLocal
+from backend.utils.env_loader import load_env
+import logging
 
-load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
+load_env()
 
-celery_app = Celery('tasks', broker=f"redis://{os.getenv('REDIS_HOST', 'redis')}:6379/0",
+celery_app = Celery('tasks', 
+                    broker=f"redis://{os.getenv('REDIS_HOST', 'redis')}:6379/0",
                     backend=f"redis://{os.getenv('REDIS_HOST', 'redis')}:6379/0")
 
 embeddings = get_embeddings_model()
-
+redis_cache_service = get_redis_cache_service()
 
 document_service = DocumentService(embeddings, SessionLocal)
+logger = logging.getLogger(__name__)
+
 
 @celery_app.task(bind=True)
 def process_documents_task(self, session_id: str, file_data: list):
     try:
         filenames = [file['filename'] for file in file_data]
         self.update_state(state="PROGRESS", meta={"status": "Processing documents...", "session_id": session_id})
+        
         document_service.process_documents(file_data, session_id, filenames)
+        
         
         return {"status": "complete", "session_id": session_id}
     except Exception as e:

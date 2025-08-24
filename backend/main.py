@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 from backend.tasks import process_documents_task
 from backend.services.database_service import DatabaseService, get_database_service
+from backend.services.redis_cache_service import get_redis_cache_service
 from backend.components.chat_logic import create_qa_chain
 from backend.utils.model_loader import get_embeddings_model
 
@@ -17,6 +18,7 @@ from langchain_chroma import Chroma
 from langchain_core.messages import HumanMessage, AIMessage
 import redis
 from backend.chroma_client_singleton import ChromaClientSingleton
+from backend.utils.env_loader import load_env
 
 
 from backend.database import Base, engine
@@ -33,8 +35,8 @@ class ChatHistoryResponse(BaseModel):
 class DeleteChatroomRequest(BaseModel):
     session_id: str
 
-load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
-logging.basicConfig(level=logging.ERROR)
+load_env()
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
@@ -46,22 +48,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+cache_service = get_redis_cache_service()
+client_singleton = ChromaClientSingleton()
 embeddings = get_embeddings_model()
-redis_client = redis.StrictRedis(
-    host=os.getenv("REDIS_HOST", "redis"),
-    port=os.getenv("REDIS_PORT", "6379"),
-    db=0,
-)
 
-def get_vector_store(session_id: str):
-    client_singleton = ChromaClientSingleton()
-    
+
+def get_vector_store(
+    session_id: str,
+):
+    if not cache_service.get_flag(f"vector_store_ready:{session_id}"):
+        raise HTTPException(
+            status_code=404, 
+            detail="Vector store not found for this session. Please wait for processing to complete."
+        )
+
     return Chroma(
         client=client_singleton.client,
         embedding_function=embeddings,
         collection_name=session_id
     )
-    
+
 @app.on_event("startup")
 def on_startup():
     try:
@@ -85,6 +91,10 @@ async def process_pdfs_endpoint(
             detail=f"You can only upload {MAX_FILES_PER_CHAT}."
         )
     try:
+        cache_service.delete_keys(
+            f"vector_store_ready:{session_id}",
+        )
+        
         file_data = [{"filename": file.filename, "content": file.file.read()} for file in files]
         task = process_documents_task.delay(session_id, file_data)
         return {"message": "Processing started.", "task_id": task.id}
@@ -108,17 +118,18 @@ async def get_task_status(task_id: str):
 @app.post("/ask-question/")
 async def ask_question_endpoint(
     request: QuestionRequest, 
-    db_service: DatabaseService = Depends(get_database_service)
+    db_service: DatabaseService = Depends(get_database_service),
+    
 ):
     try:
-        vector_store = get_vector_store(request.session_id)
-        
         db_history = db_service.get_chat_history(request.session_id)
         
         chat_history = [
             HumanMessage(content=msg['content']) if msg['role'] == "user" else AIMessage(content=msg['content'])
             for msg in db_history
         ]
+        
+        vector_store = get_vector_store(request.session_id)
         
         qa_chain = create_qa_chain(vector_store) 
         result = qa_chain.invoke({"question": request.question, "chat_history": chat_history})
@@ -154,10 +165,9 @@ async def get_all_chatrooms_endpoint(db_service: DatabaseService = Depends(get_d
 @app.post("/delete-chatroom/")
 async def delete_chatroom_endpoint(
     request: DeleteChatroomRequest, 
-    db_service: DatabaseService = Depends(get_database_service)
+    db_service: DatabaseService = Depends(get_database_service),
 ):
     try:
-        client_singleton = ChromaClientSingleton()
         
         try:
             client_singleton.client.get_collection(name=request.session_id)
@@ -168,8 +178,9 @@ async def delete_chatroom_endpoint(
 
         db_service.delete_session(request.session_id)
         
-        redis_client.delete(f"{request.session_id}_text")
-        redis_client.delete(f"{request.session_id}_vector_store")
+        cache_service.delete_keys(
+            f"vector_store_ready:{request.session_id}",
+        )
         
         return {"message": f"Chatroom {request.session_id} successfully deleted."}
     except Exception as e:
