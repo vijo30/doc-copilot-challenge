@@ -31,19 +31,21 @@ This project uses `docker` and `docker-compose` to manage all its services.
 
 ### Setup
 
-1.  Clone the repository:
-    ```bash
-    git clone https://github.com/vijo30/doc-copilot-challenge.git
-    cd doc-copilot-challenge
-    ```
+1. Clone the repository:
+```
+git clone https://github.com/vijo30/doc-copilot-challenge.git
+cd doc-copilot-challenge
+```
 
-2.  Build and run the Docker containers:
-    ```bash
-    docker-compose up --build
-    ```
 
-3.  Access the application:
-    Open your web browser and navigate to `http://localhost:8501`.
+2. Build and run the Docker containers:
+
+```
+docker-compose up --build
+```
+
+3. Access the application:
+Open your web browser and navigate to `http://localhost:8501`.
 
 ---
 
@@ -63,13 +65,13 @@ This project uses `docker` and `docker-compose` to manage all its services.
 
 The conversational flow follows a structured RAG pipeline:
 
-1.  **Document Upload:** The user uploads PDF files via the Streamlit interface.
-2.  **Processing:** The system loads the PDFs, splits the content into manageable chunks, and creates vector embeddings for each chunk.
-3.  **Indexing:** The generated embeddings are stored in ChromaDB, creating an index for fast retrieval.
-4.  **User Query:** The user enters a question in the chat interface.
-5.  **Retrieval:** The system converts the user's question into a vector and uses it to perform a similarity search in the ChromaDB index. It retrieves the most relevant document chunks.
-6.  **Generation:** The retrieved chunks are passed to the LLM as context, along with the user's original question. The LLM generates a coherent and contextual response.
-7.  **Response:** The final answer is displayed to the user in the chat.
+1. **Document Upload:** The user uploads PDF files via the Streamlit interface.
+2. **Processing:** The system loads the PDFs, splits the content into manageable chunks, and creates vector embeddings for each chunk.
+3. **Indexing:** The generated embeddings are stored in ChromaDB, creating an index for fast retrieval.
+4. **User Query:** The user enters a question in the chat interface.
+5. **Retrieval:** The system converts the user's question into a vector and uses it to perform a similarity search in the ChromaDB index. It retrieves the most relevant document chunks.
+6. **Generation:** The retrieved chunks are passed to the LLM as context, along with the user's original question. The LLM generates a coherent and contextual response.
+7. **Response:** The final answer is displayed to the user in the chat.
 
 ---
 
@@ -78,12 +80,17 @@ The conversational flow follows a structured RAG pipeline:
 ### Current Limitations
 - **Single-format Support:** The system currently only handles PDF files.
 - **Advanced Features:** The optional features (summarization, comparison, classification) have not yet been implemented.
-- **Basic UI:** The user interface is functional but lacks advanced features and a polished design.
 - **Cost:** Reliance on a paid LLM API (OpenAI) can be a cost factor for extensive usage.
+
+---
+
+### ⚠️ Special Notice: Streamlit Limitations ⚠️
+Due to the nature of **Streamlit's single-thread, script-based execution model**, the UI may exhibit certain unexpected behaviors or "bugs." Unlike traditional web applications, Streamlit reruns the entire script whenever a user interacts with a widget, such as changing the language or uploading a file. This can sometimes lead to an inconsistent UI state, especially during long-running background tasks like document processing.
+
+---
 
 ### Future Roadmap
 - **Multi-format Support:** Add compatibility for `.docx`, `.txt`, and other document types.
-- **Advanced Features:** Implement optional functionalities like automatic document summarization and cross-document comparison.
 - **Scalability:** Migrate to a managed vector store solution (e.g., Pinecone, Weaviate) and deploy the application on a cloud platform (e.g., AWS, GCP) to handle larger loads.
-- **UI/UX Improvement:** Enhance the user interface with better design, loading indicators, and error handling.
-- **Open-source LLM:** Explore using an open-source LLM (e.g., Llama 3) to reduce costs and increase flexibility.
+- **UI/UX Improvement:** Enhance the user interface with better design, loading indicators, and error handling. Considering to migrate to another frontend framework.
+- **Open-source LLM:** Explore using an open-source LLM (e.g., Llama 3) to reduce costs and increase fle
