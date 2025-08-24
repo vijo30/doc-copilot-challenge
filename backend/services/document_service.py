@@ -1,85 +1,57 @@
 from backend.components.document_processor import get_pdf_text, create_text_chunks, vectorize_and_store
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
-from PyPDF2 import PdfReader
 from sqlalchemy.orm import Session
 from backend.models.schemas import ChatSession
-from io import BytesIO
-from langchain_community.vectorstores import Chroma
 from backend.chroma_client_singleton import ChromaClientSingleton
 
-
 class DocumentService:
-    """Service to handle the core document processing logic."""
+    """Service to handle the core document processing and persistence logic."""
     
     def __init__(self, embeddings: HuggingFaceEmbeddings, db_session_maker: Session):
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200
-        )
         self.embeddings = embeddings
         self.db_session_maker = db_session_maker
-
-    def process_pdfs_to_text(self, uploaded_files):
-        """
-        Processes a list of uploaded files and returns a single string of all text.
-        """
-        return get_pdf_text(uploaded_files)
-        
-    def create_chunks_from_text(self, text):
-        """
-        Creates document chunks from a string of text.
-        """
-        text_chunks = create_text_chunks(text)
-        return [Document(page_content=t) for t in text_chunks]
-
-    def vectorize_chunks(self, chunks):
-        """
-        Creates a vector store from document chunks using the pre-initialized embeddings model.
-        """
-        return vectorize_and_store(chunks, self.embeddings)
-      
+        self.chroma_client_singleton = ChromaClientSingleton()
 
     def process_documents(self, file_data: list, session_id: str, filenames: list) -> str:
-        chroma_client_singleton = ChromaClientSingleton()
+        """
+        Processes uploaded documents, stores them in a vector store, and updates the database.
         
+        Args:
+            file_data: A list of dictionaries, each containing file content and metadata.
+            session_id: The ID of the current chat session.
+            filenames: A list of the names of the uploaded files.
+
+        Returns:
+            A string indicating the result of the process.
+        """
         try:
-            chroma_client_singleton.client.get_collection(name=session_id)
-            chroma_client_singleton.client.delete_collection(name=session_id)
+            self.chroma_client_singleton.client.get_collection(name=session_id)
+            self.chroma_client_singleton.client.delete_collection(name=session_id)
             print(f"ChromaDB collection for session {session_id} deleted successfully.")
         except Exception:
             print(f"No existing ChromaDB collection found for session {session_id}. Proceeding.")
-        
+
         all_documents = []
-        
+        raw_text_combined = ""
+
         for file in file_data:
-            raw_text = ""
-            reader = PdfReader(BytesIO(file["content"]))
-            for page in reader.pages:
-                text = page.extract_text()
-                if text:
-                    raw_text += text
-            
-            texts = self.text_splitter.split_text(raw_text)
-            
-            file_name = file["filename"]
-            documents = [Document(page_content=t, metadata={"filename": file_name}) for t in texts]
+            raw_text = get_pdf_text([file])
+            raw_text_combined += raw_text
+
+            if not raw_text:
+                print(f"No text found in file {file['filename']}. Skipping.")
+                continue
+
+            texts = create_text_chunks(raw_text)
+            documents = [Document(page_content=t, metadata={"filename": file["filename"]}) for t in texts]
             all_documents.extend(documents)
-            
+
         if not all_documents:
             print("No text found in the uploaded documents. Aborting vector store creation.")
             return "No text found in the uploaded documents."
-            
-        chroma_client_singleton = ChromaClientSingleton()
-        
-        vector_store = Chroma.from_documents(
-            all_documents, 
-            self.embeddings,
-            client=chroma_client_singleton.client,
-            collection_name=session_id
-        )
-    
+
+        vectorize_and_store(all_documents, self.embeddings, self.chroma_client_singleton.client, session_id)
         
         with self.db_session_maker() as db_session:
             db_entry = db_session.query(ChatSession).filter_by(id=session_id).first()
@@ -89,5 +61,5 @@ class DocumentService:
             
             db_entry.uploaded_files = filenames
             db_session.commit()
-
-        return raw_text
+            
+        return f"Successfully processed {len(all_documents)} document chunks from {len(file_data)} files."
